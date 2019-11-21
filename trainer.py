@@ -186,7 +186,7 @@ class Trainer(object):
             raise NotImplementedError(f'Network type '
                                       f'`{self.args.network_type}` is not '
                                       f'defined')
-        self.controller = models.Controller(self.args)
+        self.controller = models.Controller(self.args)  #构建了一个orward：Embedding（130,100）->lstm（100,100）->decoder的列表，对应25个decoder
 
         if self.args.num_gpu == 1:
             self.shared.cuda()
@@ -211,13 +211,13 @@ class Trainer(object):
             single (bool): If True it won't train the controller and use the
                            same dag instead of derive().
         """
-        dag = utils.load_dag(self.args) if single else None
+        dag = utils.load_dag(self.args) if single else None  #初始训练dag=None
         
-        if self.args.shared_initial_step > 0:
+        if self.args.shared_initial_step > 0:  #self.args.shared_initial_step default=0
             self.train_shared(self.args.shared_initial_step)
             self.train_controller()
 
-        for self.epoch in range(self.start_epoch, self.args.max_epoch):
+        for self.epoch in range(self.start_epoch, self.args.max_epoch):  #start_epoch=0,max_epoch=150
             # 1. Training the shared parameters omega of the child models
             self.train_shared(dag=dag)
 
@@ -265,16 +265,16 @@ class Trainer(object):
             max_step: Used to run extra training steps as a warm-up.
             dag: If not None, is used instead of calling sample().
 
-        BPTT is truncated at 35 timesteps.
+        BPTT is truncated at 35 timesteps.  #基于时间的反向传播算法BPTT(Back Propagation Trough Time)
 
         For each weight update, gradients are estimated by sampling M models
         from the fixed controller policy, and averaging their gradients
         computed on a batch of training data.
         """
-        model = self.shared
-        model.train()
-        self.controller.eval()
-
+        model = self.shared   #model.RNN
+        model.train()   #set RNN.training属性为true 即当前训练的是Train而不训练Controller https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module.train
+        self.controller.eval() #Sets the module in evaluation mode. This is equivalent with self.train(False).
+        # 功能：初始化variable，即全零的Tensor
         hidden = self.shared.init_hidden(self.args.batch_size)
 
         if max_step is None:

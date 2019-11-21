@@ -136,7 +136,7 @@ class Controller(torch.nn.Module):
                 hidden,
                 block_idx,
                 is_embed):
-        #forward：Embedding（130,100）->lstm（100,100）->decoder（25个decorder，根据传入的block_idx产生不同的decoder结果
+        #forward：Embedding（130,100）->lstm（100,100）->decoder（25个decorder，根据传入的block_idx产生不同的decoder结果，大小为（100，（1至12不等））
         if not is_embed:
             embed = self.encoder(inputs)
         else:
