@@ -8,7 +8,7 @@ import json
 import logging
 
 import numpy as np
-import pygraphviz as pgv
+#import pygraphviz as pgv
 
 import torch
 from torch.autograd import Variable
@@ -26,7 +26,7 @@ try:
 except:
     import cv2
     imread = cv2.imread
-    imresize = cv2.imresize
+    imresize = cv2.resize
     imsave = imwrite = cv2.imwrite
 
 
@@ -62,6 +62,7 @@ def add_node(graph, node_id, label, shape='box', style='filled'):
 
 def draw_network(dag, path):
     makedirs(os.path.dirname(path))
+    """
     graph = pgv.AGraph(directed=True, strict=True,
                        fontname='Helvetica', arrowtype='open') # not work?
 
@@ -83,7 +84,7 @@ def draw_network(dag, path):
 
     graph.layout(prog='dot')
     graph.draw(path)
-
+    """
 def make_gif(paths, gif_path, max_frame=50, prefix=""):
     import imageio
 
@@ -129,7 +130,7 @@ def detach(h):
         return Variable(h.data)
     else:
         return tuple(detach(v) for v in h)
-
+#功能：根据不同的数据来源构造初始Variable
 def get_variable(inputs, cuda=False, **kwargs):
     if type(inputs) in [list, np.ndarray]:
         inputs = torch.Tensor(inputs)
@@ -144,10 +145,21 @@ def update_lr(optimizer, lr):
         param_group['lr'] = lr
 
 def batchify(data, bsz, use_cuda):
+    """
+    功能：返回整批次的数据，
+    :param data:
+    :param bsz:batch_size
+    :param use_cuda:
+    :return:
+    """
     # code from https://github.com/pytorch/examples/blob/master/word_language_model/main.py 
-    nbatch = data.size(0) // bsz
-    data = data.narrow(0, 0, nbatch * bsz)
-    data = data.view(bsz, -1).t().contiguous()
+    nbatch = data.size(0) // bsz  #获取batch的数量   nbatch=14524  data.size=torch.Size([929589])
+    data = data.narrow(0, 0, nbatch * bsz)#pytorch.narrow,取前nbatch*bsz个数据 data.size=torch.Size([929536])
+    #tensor.t() ->0-D and 1-D tensors are returned as it is and 2-D tensor can be seen as a short-hand function for transpose(input, 0, 1).
+    data = data.view(bsz, -1).t().contiguous()  #tensor.t()  torch.t(input) → Tensor,Expects input to be <= 2-D tensor and transposes dimensions 0 and 1.二维向量的转置
+    #view就是renshape，这里的-1表示第二个维度是根据第一个维度推导出来的，data.size=torch.Size([14524,64])
+    #tensor.contiguous----->https://www.zhihu.com/question/60321866
+    #没太看懂，但这个方法影响并不是很大，根据错误提示使用即可，简单来说contiguous是用于调整方阵的布局的
     if use_cuda:
         data = data.cuda()
     return data
@@ -161,10 +173,14 @@ Node = collections.namedtuple('Node', ['id', 'name'])
 
 
 class keydefaultdict(defaultdict):
+    #Python中的defaultdict可用于给所有的key赋一个默认的value
+    #这样当访问的key对应的value不存在的时候，可以返回一个默认值
+    #dict中不存在__missing__()方法，需要在派生的子类中自己实现这个方法
     def __missing__(self, key):
         if self.default_factory is None:
             raise KeyError(key)
         else:
+            #defaultdict.default_factory，如果没有key的话就从key这个方法中产生
             ret = self[key] = self.default_factory(key)
             return ret
 

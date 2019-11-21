@@ -13,7 +13,7 @@ logger = utils.get_logger()
 
 def main(args):  # pylint:disable=redefined-outer-name
     """main: Entry point."""
-    utils.prepare_dirs(args)
+    utils.prepare_dirs(args)#data_dir="./data/ptb"
 
     torch.manual_seed(args.random_seed)
 
@@ -21,11 +21,11 @@ def main(args):  # pylint:disable=redefined-outer-name
         torch.cuda.manual_seed(args.random_seed)
 
     if args.network_type == 'rnn':
-        dataset = data.text.Corpus(args.data_path)
+        dataset = data.text.Corpus(args.data_path)#将文本数据读入字典，生成词对应的序号的Tensor
     elif args.dataset == 'cifar':
         dataset = data.image.Image(args.data_path)
     else:
-        raise NotImplementedError(f"{args.dataset} is not supported")
+        raise NotImplementedError("{args.dataset} is not supported")
 
     trnr = trainer.Trainer(args, dataset)
 

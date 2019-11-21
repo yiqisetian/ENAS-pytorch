@@ -151,13 +151,13 @@ class Trainer(object):
                                         args.test_batch_size,
                                         self.cuda)
 
-        self.max_length = self.args.shared_rnn_max_length
+        self.max_length = self.args.shared_rnn_max_length   #default=35
 
         if args.use_tensorboard:
             self.tb = TensorBoard(args.model_dir)
         else:
             self.tb = None
-        self.build_model()
+        self.build_model()  #创建一个模型存入self.shared中，这里可以是RNN或CNN，再创建一个Controler
 
         if self.args.load_path:
             self.load_model()

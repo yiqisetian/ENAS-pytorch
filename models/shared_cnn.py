@@ -41,7 +41,7 @@ class CNN(SharedModel):
 
         self.args = args
         self.images = images
-
+        #defaultdict的作用是在于，当字典里的key不存在但被查找时，返回的不是keyError而是一个默认值
         self.w_c, self.w_h = defaultdict(dict), defaultdict(dict)
         self.reset_parameters()
 
@@ -53,11 +53,11 @@ class CNN(SharedModel):
         raise NotImplemented("In progress...")
 
     def forward(self, inputs, dag):
-        pass
+        pass #空语句，pass 不做任何事情，一般用做占位语句。
 
     def get_f(self, name):
         name = name.lower()
-        return f
+        return name
 
     def get_num_cell_parameters(self, dag):
         pass

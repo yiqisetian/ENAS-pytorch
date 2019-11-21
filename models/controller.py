@@ -85,30 +85,32 @@ class Controller(torch.nn.Module):
         if self.args.network_type == 'rnn':
             # NOTE(brendan): `num_tokens` here is just the activation function
             # for every even step,
-            self.num_tokens = [len(args.shared_rnn_activations)]
-            for idx in range(self.args.num_blocks):
+            self.num_tokens = [len(args.shared_rnn_activations)]  #"['tanh', 'ReLU', 'identity', 'sigmoid']"
+            for idx in range(self.args.num_blocks):  #num_blocks:default=12
                 self.num_tokens += [idx + 1,
                                     len(args.shared_rnn_activations)]
-            self.func_names = args.shared_rnn_activations
+            #经过上面那个for循环，num_tokens变为[4, 1, 4, 2, 4, 3, 4, 4, 4, 5, 4, 6, 4, 7, 4, 8, 4, 9, 4, 10, 4, 11, 4, 12, 4]
+            self.func_names = args.shared_rnn_activations #func_name= "['tanh', 'ReLU', 'identity', 'sigmoid']"
         elif self.args.network_type == 'cnn':
             self.num_tokens = [len(args.shared_cnn_types),
                                self.args.num_blocks]
             self.func_names = args.shared_cnn_types
 
-        num_total_tokens = sum(self.num_tokens)
+        num_total_tokens = sum(self.num_tokens) #num_total_tokens=130
 
-        self.encoder = torch.nn.Embedding(num_total_tokens,
-                                          args.controller_hid)
-        self.lstm = torch.nn.LSTMCell(args.controller_hid, args.controller_hid)
+        self.encoder = torch.nn.Embedding(num_total_tokens,args.controller_hid) #(130,100)
+        self.lstm = torch.nn.LSTMCell(args.controller_hid, args.controller_hid)#(100,100)
 
         # TODO(brendan): Perhaps these weights in the decoder should be
         # shared? At least for the activation functions, which all have the
         # same size.
-        self.decoders = []
+        self.decoders = []  #len(self.decoders)=25=len(self.num_tokens)
         for idx, size in enumerate(self.num_tokens):
             decoder = torch.nn.Linear(args.controller_hid, size)
             self.decoders.append(decoder)
-
+        #ModuleList can be indexed like a regular Python list,
+        #but modules it contains are properly registered, and will be visible by all Module methods.
+        #使用ModuleList可以管理多个Mudule而不用每个Module都起个名字，实际上就是一个Module数组
         self._decoders = torch.nn.ModuleList(self.decoders)
 
         self.reset_parameters()
@@ -129,11 +131,12 @@ class Controller(torch.nn.Module):
         for decoder in self.decoders:
             decoder.bias.data.fill_(0)
 
-    def forward(self,  # pylint:disable=arguments-differ
+    def forward(self,  # pylint:disable=arguments-differ #Pylint 是一个 Python 代码分析工具,它分析 Python 代码中的错误,查找不符合代码风格标准
                 inputs,
                 hidden,
                 block_idx,
                 is_embed):
+        #forward：Embedding（130,100）->lstm（100,100）->decoder（25个decorder，根据传入的block_idx产生不同的decoder结果
         if not is_embed:
             embed = self.encoder(inputs)
         else:

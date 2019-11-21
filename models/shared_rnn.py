@@ -61,8 +61,8 @@ class EmbeddingDropout(torch.nn.Embedding):
     Networks', (Gal and Ghahramani, 2016).
     """
     def __init__(self,
-                 num_embeddings,
-                 embedding_dim,
+                 num_embeddings,   #corpus.num_tokens=1000
+                 embedding_dim,    #args.shared_embed=1000隐藏维度
                  max_norm=None,
                  norm_type=2,
                  scale_grad_by_freq=False,
@@ -89,26 +89,51 @@ class EmbeddingDropout(torch.nn.Embedding):
         self.dropout = dropout
         assert (dropout >= 0.0) and (dropout < 1.0), ('Dropout must be >= 0.0 '
                                                       'and < 1.0')
-        self.scale = scale
+        self.scale = scale  #缩放参数
 
     def forward(self, inputs):  # pylint:disable=arguments-differ
         """Embeds `inputs` with the dropped out embedding weight matrix."""
-        if self.training:
+        """
+        training是nn.Module的属性，可以使用train(mode)来设置，作用如下：
+        This has any effect only on certain modules. See documentations of
+        particular modules for details of their behaviors in training/evaluation
+        mode, if they are affected, e.g. :class:`Dropout`, :class:`BatchNorm`,
+        etc.
+        """
+        if self.training:#self.training是nn.Module的属性，
             dropout = self.dropout
         else:
             dropout = 0
 
         if dropout:
-            mask = self.weight.data.new(self.weight.size(0), 1)
+            """
+            ~Embedding.weight (Tensor) – the learnable weights of the module of shape (num_embeddings, embedding_dim) 
+            initialized from N(0,1)
+            """
+            mask = self.weight.data.new(self.weight.size(0), 1)#self.weight是nn.Embedding的属性 self.weight[10000,1000] pytorch=0.3.1
+            #mask = self.weight.detach().new_empty(self.weight.size(0), 1)  #mask[10000,1] pytorch=1.3.1
+            """
+            bernoulli_(p=0.5, *, generator=None) → Tensor
+            Fills each location of self with an independent sample from \text{Bernoulli}(\texttt{p})Bernoulli(p) . self can have integral dtype.
+            这里重置了mask，因此上面的创建方法使用new_empty或者其他的new_ones等等并不重要，这个mask是用于dropout的
+            """
             mask.bernoulli_(1 - dropout)
-            mask = mask.expand_as(self.weight)
-            mask = mask / (1 - dropout)
+            #刚开始mask是（10000，1）的，下一行再把他扩展成（10000,1000）
+            mask = mask.expand_as(self.weight)  #Expand this tensor to the same size as other. self.expand_as(other) is equivalent to self.expand(other.size()).
+            mask = mask / (1 - dropout)  #这里采用的是Inverted dropout方法，除1-dropout可以保证输出的激活值的期望不变
             masked_weight = self.weight * Variable(mask)
         else:
             masked_weight = self.weight
         if self.scale and self.scale != 1:
             masked_weight = masked_weight * self.scale
-
+        #这里使用的是nn.functional和nn.Module没有太多本质区别，当没有可学习的参数的时候可以使用nn.functional否则
+        #应该使用nn.Module
+        """
+        Input: LongTensor of arbitrary shape containing the indices to extract
+        Weight: Embedding matrix of floating point type with shape (V, embedding_dim),
+            where V = maximum index + 1 and embedding_dim = the embedding size
+        Output: (*, embedding_dim), where * is the input shape
+        """
         return F.embedding(inputs,
                            masked_weight,
                            max_norm=self.max_norm,
@@ -131,27 +156,39 @@ class LockedDropout(nn.Module):
         return mask * x
 
 
-class RNN(models.shared_base.SharedModel):
-    """Shared RNN model."""
+class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.SharedModel->torch.nn.Module
+    """Shared RNN model.这个shared_base在这里应该是没写完，只实现了一个计算参数数量的功能，其他和torch.nn.Module没有区别"""
     def __init__(self, args, corpus):
-        models.shared_base.SharedModel.__init__(self)
+        """
+        :param args: 命令行参数
+        :param corpus: 数据集
+        :properties
+            decoder,从1000到10000的映射，一个全链接层
+            encoder，一个自定义的EmbeddingDropout层，从10000，到1000的映射，可以设置dropout
+            lockdrop，一个单独dropout层，作用？
+            args.tie_weights：作用不明，用encode的权重覆盖decoder的权重？这也不是一个网络结构，怎么能覆盖呢？
+            w_xc,w_xh,w_hc,w_hh,w_hc_raw，w_hh_raw，w_h，w_c，RNN的参数矩阵这里执行的就是一些初始化的工作
+            static_init_hidden，作用，在forward中hidden不存在的时候可以设置一个hidden保证程序执行
+        """
+        models.shared_base.SharedModel.__init__(self)  #构造父类
 
         self.args = args
         self.corpus = corpus
-
-        self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)
+        #linear实现从1000到10000的映射，也就是从隐藏维度映射回词的编号
+        self.decoder = nn.Linear(args.shared_hid, corpus.num_tokens)  #shared_hid=1000,corpus.num_tokens=10000，在数据集中一共有10000个不同的词、
+        #encoder实现从10000到1000的映射
         self.encoder = EmbeddingDropout(corpus.num_tokens,
-                                        args.shared_embed,
-                                        dropout=args.shared_dropoute)
-        self.lockdrop = LockedDropout()
-
+                                        args.shared_embed,#shared_embed=1000隐藏维度
+                                        dropout=args.shared_dropoute)  #shared_dropoute=0.1
+        self.lockdrop = LockedDropout()#一个单独的dropout
+        #???
         if self.args.tie_weights:
             self.decoder.weight = self.encoder.weight
 
         # NOTE(brendan): Since W^{x, c} and W^{h, c} are always summed, there
         # is no point duplicating their bias offset parameter. Likewise for
         # W^{x, h} and W^{h, h}.
-        self.w_xc = nn.Linear(args.shared_embed, args.shared_hid)
+        self.w_xc = nn.Linear(args.shared_embed, args.shared_hid)  #(1000,1000)
         self.w_xh = nn.Linear(args.shared_embed, args.shared_hid)
 
         # The raw weights are stored here because the hidden-to-hidden weights
@@ -163,45 +200,44 @@ class RNN(models.shared_base.SharedModel):
         self.w_hc = None
         self.w_hh = None
 
-        self.w_h = collections.defaultdict(dict)
+        self.w_h = collections.defaultdict(dict)  #collections.defaultdict(function_factory)一个函数工厂，里面的每个对象都是一个dict
         self.w_c = collections.defaultdict(dict)
 
         for idx in range(args.num_blocks):
             for jdx in range(idx + 1, args.num_blocks):
+                #二维字典，形成一个下三角字典矩阵，存储的block的wh和wc
                 self.w_h[idx][jdx] = nn.Linear(args.shared_hid,
                                                args.shared_hid,
                                                bias=False)
                 self.w_c[idx][jdx] = nn.Linear(args.shared_hid,
                                                args.shared_hid,
                                                bias=False)
-
-        self._w_h = nn.ModuleList([self.w_h[idx][jdx]
-                                   for idx in self.w_h
-                                   for jdx in self.w_h[idx]])
-        self._w_c = nn.ModuleList([self.w_c[idx][jdx]
-                                   for idx in self.w_c
-                                   for jdx in self.w_c[idx]])
+        #又把上面的字典矩阵转存到_w_h和_w_c中
+        self._w_h = nn.ModuleList([self.w_h[idx][jdx] for idx in self.w_h for jdx in self.w_h[idx]])
+        self._w_c = nn.ModuleList([self.w_c[idx][jdx] for idx in self.w_c for jdx in self.w_c[idx]])
 
         if args.mode == 'train':
             self.batch_norm = nn.BatchNorm1d(args.shared_hid)
         else:
             self.batch_norm = None
-
+        #重置参数
         self.reset_parameters()
-        self.static_init_hidden = utils.keydefaultdict(self.init_hidden)
+        #返回一个字典类keydefaultdict继承自defaultdic，自己实现了__missing__方法，当访问的key没有value的时候用init_hidden来初始化一个value，
+        #这个value就是一个全零的Variable
+        self.static_init_hidden = utils.keydefaultdict(self.init_hidden)#init_hidden是一个方法，返回一个全零的Variable
 
-        logger.info(f'# of parameters: {format(self.num_parameters, ",d")}')
+        logger.info('# of parameters: {format(self.num_parameters, ",d")}')
 
     def forward(self,  # pylint:disable=arguments-differ
                 inputs,
-                dag,
+                dag,   #有向无环图
                 hidden=None,
                 is_train=True):
         time_steps = inputs.size(0)
         batch_size = inputs.size(1)
 
         is_train = is_train and self.args.mode in ['train']
-
+        #真正调用F.dropout来dropout参数
         self.w_hh = _get_dropped_weights(self.w_hh_raw,
                                          self.args.shared_wdrop,
                                          self.training)
@@ -211,19 +247,18 @@ class RNN(models.shared_base.SharedModel):
 
         if hidden is None:
             hidden = self.static_init_hidden[batch_size]
-
+        #完成10000->1000的映射
         embed = self.encoder(inputs)
 
         if self.args.shared_dropouti > 0:
-            embed = self.lockdrop(embed,
-                                  self.args.shared_dropouti if is_train else 0)
+            embed = self.lockdrop(embed,self.args.shared_dropouti if is_train else 0)
 
         # TODO(brendan): The norm of hidden states are clipped here because
         # otherwise ENAS is especially prone to exploding activations on the
         # forward pass. This could probably be fixed in a more elegant way, but
         # it might be exposing a weakness in the ENAS algorithm as currently
         # proposed.
-        #
+        #这里采用了参数clip的方法来防止梯度爆炸
         # For more details, see
         # https://github.com/carpedm20/ENAS-pytorch/issues/6
         clipped_num = 0
@@ -354,9 +389,10 @@ class RNN(models.shared_base.SharedModel):
             output = self.batch_norm(output)
 
         return output, h[self.args.num_blocks - 1]
-
+    #功能：初始化variable，即全零的Tensor
     def init_hidden(self, batch_size):
         zeros = torch.zeros(batch_size, self.args.shared_hid)
+        #下面这个方法没什么用，就是应对不同输入形式的，结果都是返回一个全零的Variable
         return utils.get_variable(zeros, self.args.cuda, requires_grad=False)
 
     def get_f(self, name):
@@ -404,7 +440,7 @@ class RNN(models.shared_base.SharedModel):
         logger.debug(f'# of cell parameters: '
                      f'{format(self.num_parameters, ",d")}')
         return num
-
+    #重置参数
     def reset_parameters(self):
         init_range = 0.025 if self.args.mode == 'train' else 0.04
         for param in self.parameters():
