@@ -173,9 +173,13 @@ Node = collections.namedtuple('Node', ['id', 'name'])
 
 
 class keydefaultdict(defaultdict):
+    #https://www.jb51.net/article/134356.htm
     #Python中的defaultdict可用于给所有的key赋一个默认的value
+    #defaultdict类的初始化函数接受一个类型作为参数，当所访问的键不存在的时候，可以实例化一个值作为默认值
+    #需要注意的是，这种形式的默认值只有在通过 dict[key] 或者 dict.__getitem__(key) 访问的时候才有效
     #这样当访问的key对应的value不存在的时候，可以返回一个默认值
     #dict中不存在__missing__()方法，需要在派生的子类中自己实现这个方法
+    #当key不存在的时候调用__missing__来生生成value
     def __missing__(self, key):
         if self.default_factory is None:
             raise KeyError(key)
@@ -194,7 +198,7 @@ def to_item(x):
         assert (x.dim() == 1) and (len(x) == 1)
         return x[0]
 
-    return x.item()
+    return x.item()#Returns the value of this tensor as a standard Python number.
 
 
 def get_logger(name=__file__, level=logging.INFO):

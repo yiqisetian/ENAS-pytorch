@@ -40,20 +40,22 @@ def _construct_dags(prev_nodes, activations, func_names, num_blocks):
        decoder.
     """
     dags = []
-    for nodes, func_ids in zip(prev_nodes, activations):
+    for nodes, func_ids in zip(prev_nodes, activations):  #nodes[1,11]  func_ids[1,12]
+        #这里由于prev_nodes是[[1,11]],activations是[[1,12]],zip之后是[[1,11],[1,12]],实际上这个循环也就运行一次，
         dag = collections.defaultdict(list)
 
         # add first node
         dag[-1] = [Node(0, func_names[func_ids[0]])]
         dag[-2] = [Node(0, func_names[func_ids[0]])]
 
-        # add following nodes
+        # add following nodes   Node：utils.py->Node = collections.namedtuple('Node', ['id', 'name'])
+        #dag里面存的就是一个图的所有信息，激活函数，前一个结点
         for jdx, (idx, func_id) in enumerate(zip(nodes, func_ids[1:])):
-            dag[utils.to_item(idx)].append(Node(jdx + 1, func_names[func_id]))
-
+            dag[utils.to_item(idx)].append(Node(jdx + 1, func_names[func_id]))  #utils.to_item()返回tensor对应的数值
+        #叶子结点：后面没有其他结点的结点，是一个set，保证索引不重复
         leaf_nodes = set(range(num_blocks)) - dag.keys()
 
-        # merge with avg
+        # merge with avg，将所有叶子结点归并都一个avg结点中
         for idx in leaf_nodes:
             dag[idx] = [Node(num_blocks, 'avg')]
 
@@ -90,6 +92,7 @@ class Controller(torch.nn.Module):
                 self.num_tokens += [idx + 1,
                                     len(args.shared_rnn_activations)]
             #经过上面那个for循环，num_tokens变为[4, 1, 4, 2, 4, 3, 4, 4, 4, 5, 4, 6, 4, 7, 4, 8, 4, 9, 4, 10, 4, 11, 4, 12, 4]
+            #4代表激活函数使用哪个，1-12代表节点编号
             self.func_names = args.shared_rnn_activations #func_name= "['tanh', 'ReLU', 'identity', 'sigmoid']"
         elif self.args.network_type == 'cnn':
             self.num_tokens = [len(args.shared_cnn_types),
@@ -115,13 +118,16 @@ class Controller(torch.nn.Module):
 
         self.reset_parameters()
         self.static_init_hidden = utils.keydefaultdict(self.init_hidden)
-
+        #产生一个Variable（Tensor([key,100])
         def _get_default_hidden(key):
             return utils.get_variable(
                 torch.zeros(key, self.args.controller_hid),
                 self.args.cuda,
                 requires_grad=False)
-
+        #定义了一个defaultdict，当不存在默认值的时候回调用defaultdict.default_factory()方法指定一个生成默认值的方法，
+        #因此这里的默认值就是由_get_default_hidden生成的
+        #因此，static_inputs就是一个defaultdict
+        #用于产生一系列tensor
         self.static_inputs = utils.keydefaultdict(_get_default_hidden)
 
     def reset_parameters(self):
@@ -137,9 +143,9 @@ class Controller(torch.nn.Module):
                 block_idx,
                 is_embed):
         #forward：Embedding（130,100）->lstm（100,100）->decoder（25个decorder，根据传入的block_idx产生不同的decoder结果，大小为（100，（1至12不等））
-        if not is_embed:
+        if not is_embed:#第1至12号结点
             embed = self.encoder(inputs)
-        else:
+        else:  #第0号结点
             embed = inputs
 
         hx, cx = self.lstm(embed, hidden)
@@ -149,21 +155,24 @@ class Controller(torch.nn.Module):
 
         # exploration
         if self.args.mode == 'train':
+            # shape[1,4],eg.tensor([[ 0.0034], [ 0.0065],[-0.0111],[-0.0063]])，激活函数
+            #或者shape[1,1]，上一个节点的编号
             logits = (self.args.tanh_c*F.tanh(logits))
 
         return logits, (hx, cx)
 
     def sample(self, batch_size=1, with_details=False, save_dir=None):
-        """Samples a set of `args.num_blocks` many computational nodes from the
+        """Samples a set of `args.num_blocks(12)` many computational nodes from the
         controller, where each node is made up of an activation function, and
         each node except the last also includes a previous node.
+        将所有结点和激活函数的关系都保存起来形成了一个dag，每次sample就是产生一个dag的过程
         """
         if batch_size < 1:
-            raise Exception(f'Wrong batch_size: {batch_size} < 1')
+            raise Exception('Wrong batch_size: {batch_size} < 1')
 
         # [B, L, H]
-        inputs = self.static_inputs[batch_size]
-        hidden = self.static_init_hidden[batch_size]
+        inputs = self.static_inputs[batch_size]  #Variable(tensor.shape([1,100]))
+        hidden = self.static_init_hidden[batch_size]  #tuple（Variable（tensor([1,100]),Variable（tensor([1,100]))
 
         activations = []
         entropies = []
@@ -173,55 +182,50 @@ class Controller(torch.nn.Module):
         # followed by a previous node, for each block except the last one,
         # which only gets an activation function. The last node is the output
         # node, and its previous node is the average of all leaf nodes.
-        for block_idx in range(2*(self.args.num_blocks - 1) + 1):
-            logits, hidden = self.forward(inputs,
-                                          hidden,
-                                          block_idx,
-                                          is_embed=(block_idx == 0))
+        for block_idx in range(2*(self.args.num_blocks - 1) + 1):#range(23) 25个块，最后两个一个是输出节点，一个是平均所有叶子节点
+            #12个节点，每个节点都要决定2件事情，一个是激活函数，一个是前一个节点，再加上一个初始0号节点，一共是25个块
+            #logits是输出的选择结果，哪一个结点或哪一个激活函数
+            #hidden是输入给下一个lstm单元的激活值
+            logits, hidden = self.forward(inputs, hidden, block_idx, is_embed=(block_idx == 0))
 
             probs = F.softmax(logits, dim=-1)
-            log_prob = F.log_softmax(logits, dim=-1)
+            log_prob = F.log_softmax(logits, dim=-1)#While mathematically equivalent to log(softmax(x))
             # TODO(brendan): .mean() for entropy?
+            #-ylog(y)
             entropy = -(log_prob * probs).sum(1, keepdim=False)
-
+            #Returns a tensor where each row contains num_samples indices sampled from the multinomial
+            #probability distribution located in the corresponding row of tensor input.
             action = probs.multinomial(num_samples=1).data
-            selected_log_prob = log_prob.gather(
-                1, utils.get_variable(action, requires_grad=False))
+            selected_log_prob = log_prob.gather(1, utils.get_variable(action, requires_grad=False))
 
             # TODO(brendan): why the [:, 0] here? Should it be .squeeze(), or
-            # .view()? Same below with `action`.
+            # .view()? Same below with `action`. 功能应该是一样的，可能是代码版本比较老的原因
             entropies.append(entropy)
             log_probs.append(selected_log_prob[:, 0])
 
-            # 0: function, 1: previous node
-            mode = block_idx % 2
-            inputs = utils.get_variable(
-                action[:, 0] + sum(self.num_tokens[:mode]),
-                requires_grad=False)
+            mode = block_idx % 2 # 0: function, 1: previous node
+            inputs = utils.get_variable(action[:, 0] + sum(self.num_tokens[:mode]),requires_grad=False)
 
             if mode == 0:
                 activations.append(action[:, 0])
             elif mode == 1:
                 prev_nodes.append(action[:, 0])
 
-        prev_nodes = torch.stack(prev_nodes).transpose(0, 1)
-        activations = torch.stack(activations).transpose(0, 1)
-
-        dags = _construct_dags(prev_nodes,
-                               activations,
-                               self.func_names,
-                               self.args.num_blocks)
+        prev_nodes = torch.stack(prev_nodes).transpose(0, 1) #[1,11]
+        activations = torch.stack(activations).transpose(0, 1) #[1,12]
+        #虽然命名是dags，但实际上只有一个dag
+        dags = _construct_dags(prev_nodes, activations, self.func_names, self.args.num_blocks)
 
         if save_dir is not None:
             for idx, dag in enumerate(dags):
-                utils.draw_network(dag,
-                                   os.path.join(save_dir, f'graph{idx}.png'))
+                utils.draw_network(dag,os.path.join(save_dir, 'graph{idx}.png'))
 
         if with_details:
             return dags, torch.cat(log_probs), torch.cat(entropies)
 
         return dags
-
+    #产生一个元祖（Variable（Tensor([batch,zize,100])),Variable（Tensor([batch,zize,100])))
+    #和上面的_get_default_hidden功能类似，都是产生Variable，区别是init_hidden会产生两个
     def init_hidden(self, batch_size):
         zeros = torch.zeros(batch_size, self.args.controller_hid)
         return (utils.get_variable(zeros, self.args.cuda, requires_grad=False),

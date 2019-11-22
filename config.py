@@ -20,7 +20,7 @@ net_arg = add_argument_group('Network')
 net_arg.add_argument('--network_type', type=str, choices=['rnn', 'cnn'], default='rnn')
 
 # Controller
-net_arg.add_argument('--num_blocks', type=int, default=12)
+net_arg.add_argument('--num_blocks', type=int, default=12)  #RNN cell的block数量
 net_arg.add_argument('--tie_weights', type=str2bool, default=True)
 net_arg.add_argument('--controller_hid', type=int, default=100)
 
@@ -33,7 +33,7 @@ net_arg.add_argument('--shared_dropoute', type=float, default=0.1) # TODO
 net_arg.add_argument('--shared_dropouti', type=float, default=0.65) # TODO
 net_arg.add_argument('--shared_embed', type=int, default=1000) # TODO: 200, 500, 1000
 net_arg.add_argument('--shared_hid', type=int, default=1000)
-net_arg.add_argument('--shared_rnn_max_length', type=int, default=35)
+net_arg.add_argument('--shared_rnn_max_length', type=int, default=35)#取词窗口长度
 net_arg.add_argument('--shared_rnn_activations', type=eval,
                      default="['tanh', 'ReLU', 'identity', 'sigmoid']")
 net_arg.add_argument('--shared_cnn_types', type=eval,
@@ -107,8 +107,7 @@ learn_arg.add_argument('--entropy_coeff', type=float, default=1e-4)
 
 # Shared parameters
 learn_arg.add_argument('--shared_initial_step', type=int, default=0)
-learn_arg.add_argument('--shared_max_step', type=int, default=400,
-                       help='step for shared parameters')
+learn_arg.add_argument('--shared_max_step', type=int, default=400, help='step for shared parameters')
 # NOTE(brendan): Should be 10 for CNN architectures.
 learn_arg.add_argument('--shared_num_sample', type=int, default=1,
                        help='# of Monte Carlo samples')
@@ -118,7 +117,7 @@ learn_arg.add_argument('--shared_decay', type=float, default=0.96)
 learn_arg.add_argument('--shared_decay_after', type=float, default=15)
 learn_arg.add_argument('--shared_l2_reg', type=float, default=1e-7)
 learn_arg.add_argument('--shared_grad_clip', type=float, default=0.25)
-
+learn_arg.add_argument('--shared_max_hidden_norm', type=float, default=1e6)
 # Deriving Architectures
 learn_arg.add_argument('--derive_num_sample', type=int, default=100)
 

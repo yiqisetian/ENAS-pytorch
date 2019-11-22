@@ -18,7 +18,7 @@ def _get_dropped_weights(w_raw, dropout_p, is_training):
     """Drops out weights to implement DropConnect.
 
     Args:
-        w_raw: Full, pre-dropout, weights to be dropped out.
+        w_raw: Full, pre-dropout, weights to be dropped out.  self.w_hh_raw
         dropout_p: Proportion of weights to drop out.
         is_training: True iff _shared_ model is training.
 
@@ -38,7 +38,7 @@ def _get_dropped_weights(w_raw, dropout_p, is_training):
     """
     dropped_w = F.dropout(w_raw, p=dropout_p, training=is_training)
 
-    if isinstance(dropped_w, torch.nn.Parameter):
+    if isinstance(dropped_w, torch.nn.Parameter): #hacky check
         dropped_w = dropped_w.clone()
 
     return dropped_w
@@ -155,6 +155,38 @@ class LockedDropout(nn.Module):
         mask = mask.expand_as(x)
         return mask * x
 
+def _clip_hidden_norms(hidden, hidden_norms, max_norm):
+    """Clips the hiddens to `max_norm`.
+    Args:
+        hidden: A `torch.autograd.Variable` hidden state.
+        hidden_norms: A `torch.FloatTensor` of hidden norms, size [batch_size].
+        max_norm: Norm to clip to.
+    Returns:
+        The clipped hiddens.
+    The caller should check first that `hidden` should be clipped, and this
+    function should _only_ be called if at least one hidden needs to be
+    clipped.
+    """
+    if utils.get_pytorch_version() < 0.4:
+        # NOTE(brendan): This workaround for PyTorch v0.3.1 does everything in
+        # numpy, because the PyTorch slicing and slice assignment is too flaky.
+        hidden_norms = hidden_norms.cpu().numpy()
+        clip_select = hidden_norms > max_norm
+        clip_norms = hidden_norms[clip_select]
+
+        mask = np.ones(hidden.size())
+        normalizer = max_norm/clip_norms
+        normalizer = normalizer[:, np.newaxis]
+
+        mask[clip_select] = normalizer
+        hidden *= torch.autograd.Variable(
+            torch.FloatTensor(mask).cuda(), requires_grad=False)
+    else:
+        norm = hidden.data[hidden_norms > max_norm].norm(p=2, dim=-1)
+        norm = norm.unsqueeze(-1)
+        hidden[hidden_norms > max_norm] *= max_norm/norm
+
+    return hidden
 
 class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.SharedModel->torch.nn.Module
     """Shared RNN model.这个shared_base在这里应该是没写完，只实现了一个计算参数数量的功能，其他和torch.nn.Module没有区别"""
@@ -197,7 +229,7 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
             torch.Tensor(args.shared_hid, args.shared_hid))
         self.w_hh_raw = torch.nn.Parameter(
             torch.Tensor(args.shared_hid, args.shared_hid))
-        self.w_hc = None
+        self.w_hc = None  #这两个参数是在forward中由w_hc_raw生成而来（dropout而来）
         self.w_hh = None
 
         self.w_h = collections.defaultdict(dict)  #collections.defaultdict(function_factory)一个函数工厂，里面的每个对象都是一个dict
@@ -229,12 +261,12 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
         logger.info('# of parameters: {format(self.num_parameters, ",d")}')
 
     def forward(self,  # pylint:disable=arguments-differ
-                inputs,
+                inputs,  #[35,64]
                 dag,   #有向无环图
                 hidden=None,
                 is_train=True):
-        time_steps = inputs.size(0)
-        batch_size = inputs.size(1)
+        time_steps = inputs.size(0)  #temp_steps:35
+        batch_size = inputs.size(1)  #batch_size:64
 
         is_train = is_train and self.args.mode in ['train']
         #真正调用F.dropout来dropout参数
@@ -247,80 +279,62 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
 
         if hidden is None:
             hidden = self.static_init_hidden[batch_size]
-        #完成10000->1000的映射
+        #input[35,64],一共是35*64个词，词汇表中一共是10000个词，encoder（Embedding）完成了对应的词向量的转换，即10000->1000的映射
         embed = self.encoder(inputs)
 
-        if self.args.shared_dropouti > 0:
-            embed = self.lockdrop(embed,self.args.shared_dropouti if is_train else 0)
+        if self.args.shared_dropouti > 0:#shared_dropouti:0.65,这是把embedding的结果给dropout了
+            embed = self.lockdrop(embed, self.args.shared_dropouti if is_train else 0)
 
         # TODO(brendan): The norm of hidden states are clipped here because
         # otherwise ENAS is especially prone to exploding activations on the
         # forward pass. This could probably be fixed in a more elegant way, but
-        # it might be exposing a weakness in the ENAS algorithm as currently
+        # it might be exposing a weakness（什么弱点？） in the ENAS algorithm as currently
         # proposed.
         #这里采用了参数clip的方法来防止梯度爆炸
         # For more details, see
         # https://github.com/carpedm20/ENAS-pytorch/issues/6
         clipped_num = 0
         max_clipped_norm = 0
-        h1tohT = []
-        logits = []
+        h1tohT = []  #每个RNNcell产生的h
+        logits = []  #每个RNNcell产生的结果
         for step in range(time_steps):
             x_t = embed[step]
             logit, hidden = self.cell(x_t, hidden, dag)
 
             hidden_norms = hidden.norm(dim=-1)
-            max_norm = 25.0
+            max_norm = self.args.shared_max_hidden_norm
             if hidden_norms.data.max() > max_norm:
-                # TODO(brendan): Just directly use the torch slice operations
-                # in PyTorch v0.4.
-                #
-                # This workaround for PyTorch v0.3.1 does everything in numpy,
-                # because the PyTorch slicing and slice assignment is too
-                # flaky.
                 hidden_norms = hidden_norms.data.cpu().numpy()
 
                 clipped_num += 1
                 if hidden_norms.max() > max_clipped_norm:
                     max_clipped_norm = hidden_norms.max()
 
-                clip_select = hidden_norms > max_norm
-                clip_norms = hidden_norms[clip_select]
-
-                mask = np.ones(hidden.size())
-                normalizer = max_norm/clip_norms
-                normalizer = normalizer[:, np.newaxis]
-
-                mask[clip_select] = normalizer
-                hidden *= torch.autograd.Variable(
-                    torch.FloatTensor(mask).cuda(), requires_grad=False)
+                hidden = _clip_hidden_norms(hidden, hidden_norms, max_norm)
 
             logits.append(logit)
             h1tohT.append(hidden)
 
         if clipped_num > 0:
-            logger.info(f'clipped {clipped_num} hidden states in one forward '
-                        f'pass. '
-                        f'max clipped hidden state norm: {max_clipped_norm}')
-
-        h1tohT = torch.stack(h1tohT)
-        output = torch.stack(logits)
+            logger.info('clipped {clipped_num} hidden states in one forward pass.max clipped hidden state norm: {max_clipped_norm}')
+        #torch.stack:Concatenates sequence of tensors along a new dimension.
+        h1tohT = torch.stack(h1tohT)  #h1tohT(list,[35,[64,1000]]->Tensor(35,64,1000)
+        output = torch.stack(logits)  #output(Tensor(35,64,1000))
         raw_output = output
         if self.args.shared_dropout > 0:
-            output = self.lockdrop(output,
-                                   self.args.shared_dropout if is_train else 0)
+            output = self.lockdrop(output, self.args.shared_dropout if is_train else 0)
 
         dropped_output = output
-
-        decoded = self.decoder(
-            output.view(output.size(0)*output.size(1), output.size(2)))
+        #decoded=decoder(1000->10000):output(35*64,1000)->(35*64,10000)
+        decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
+        #decoded(35*63,10000)->(35,64,10000)
         decoded = decoded.view(output.size(0), output.size(1), decoded.size(1))
 
-        extra_out = {'dropped': dropped_output,
-                     'hiddens': h1tohT,
-                     'raw': raw_output}
+        extra_out = {'dropped': dropped_output, 'hiddens': h1tohT, 'raw': raw_output}
+        #decoded(35,64,10000),hidden(64,1000),extra_out{dropped_output(35,64,1000),h1tohT(35,64,1000),raw_output(35,64,1000)
         return decoded, hidden, extra_out
 
+    #这个cell是用于计算得出的dag的前向计算的值的
     def cell(self, x, h_prev, dag):
         """Computes a single pass through the discovered RNN cell."""
         c = {}
@@ -359,8 +373,7 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
                 next_id = next_node.id
                 if next_id == self.args.num_blocks:
                     leaf_node_ids.append(node_id)
-                    assert len(nodes) == 1, ('parent of leaf node should have '
-                                             'only one child')
+                    assert len(nodes) == 1, 'parent of leaf node should have only one child'
                     continue
 
                 w_h = self.w_h[node_id][next_id]
@@ -406,7 +419,7 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
         elif name == 'sigmoid':
             f = F.sigmoid
         return f
-
+    #类内部没有使用
     def get_num_cell_parameters(self, dag):
         num = 0
 
@@ -437,8 +450,7 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
 
                 q.append(next_id)
 
-        logger.debug(f'# of cell parameters: '
-                     f'{format(self.num_parameters, ",d")}')
+        logger.debug('# of cell parameters: {format(self.num_parameters, ",d")}')
         return num
     #重置参数
     def reset_parameters(self):

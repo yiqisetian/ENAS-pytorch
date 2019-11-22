@@ -134,9 +134,7 @@ class Trainer(object):
             if regularizer[1]:
                 logger.info(f'{regularizer[0]}')
 
-        self.train_data = utils.batchify(dataset.train,
-                                         args.batch_size,
-                                         self.cuda)
+        self.train_data = utils.batchify(dataset.train, args.batch_size, self.cuda)
         # NOTE(brendan): The validation set data is batchified twice
         # separately: once for computing rewards during the Train Controller
         # phase (valid_data, batch size == 64), and once for evaluating ppl
@@ -183,9 +181,7 @@ class Trainer(object):
         elif self.args.network_type == 'cnn':
             self.shared = models.CNN(self.args, self.dataset)
         else:
-            raise NotImplementedError(f'Network type '
-                                      f'`{self.args.network_type}` is not '
-                                      f'defined')
+            raise NotImplementedError('Network type `{self.args.network_type}` is not defined')
         self.controller = models.Controller(self.args)  #构建了一个orward：Embedding（130,100）->lstm（100,100）->decoder的列表，对应25个decoder
 
         if self.args.num_gpu == 1:
@@ -238,6 +234,13 @@ class Trainer(object):
                 utils.update_lr(self.shared_optim, self.shared_lr)
 
     def get_loss(self, inputs, targets, hidden, dags):
+        """
+        :param inputs:输入数据，[35,64]
+        :param targets: 目标数据（相当于标签）[35,64] 输入的词后移一个词
+        :param hidden: 隐藏层参数
+        :param dags: RNN 的cell结构
+        :return:
+        """
         """Computes the loss for the same batch for M models.
 
         This amounts to an estimate of the loss, which is turned into an
@@ -248,10 +251,11 @@ class Trainer(object):
 
         loss = 0
         for dag in dags:
-            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)
-            output_flat = output.view(-1, self.dataset.num_tokens)
-            sample_loss = (self.ce(output_flat, targets) /
-                           self.args.shared_num_sample)
+            #decoded(35,64,10000),hidden(64,1000),extra_out{dropped_output(35,64,1000),h1tohT(35,64,1000),raw_output(35,64,1000)
+            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden) #RNN.forward
+            output_flat = output.view(-1, self.dataset.num_tokens) #(2240,10000)
+            #self.ce=nn.CrossEntropyLoss()  target(2240)  shared_num_sample=1
+            sample_loss = (self.ce(output_flat, targets) / self.args.shared_num_sample)
             loss += sample_loss
 
         assert len(dags) == 1, 'there are multiple `hidden` for multple `dags`'
@@ -278,53 +282,57 @@ class Trainer(object):
         hidden = self.shared.init_hidden(self.args.batch_size)
 
         if max_step is None:
-            max_step = self.args.shared_max_step
+            max_step = self.args.shared_max_step  #shared_max_step=150
         else:
             max_step = min(self.args.shared_max_step, max_step)
 
         abs_max_grad = 0
         abs_max_hidden_norm = 0
         step = 0
-        raw_total_loss = 0
+        raw_total_loss = 0 #用于统计结果的，和计算过程无关
         total_loss = 0
         train_idx = 0
-        # TODO(brendan): Why - 1 - 1?
+        # TODO(brendan): Why - 1 - 1?为什么-1-1？
+        # TODO(为什么-1-1)这里的train_idx是批次的编号，一共14524个batch（每个batch有64个词）为了训练输入数据不可能取最后一个batch
+        # TODO(为什么-1-1)因为如果是最后一个batch就没有target了，因此最后一个batch是倒数第二个，而倒数第二个的下标是 size-2
+        #self.train_data.size(0)   14524
         while train_idx < self.train_data.size(0) - 1 - 1:
             if step > max_step:
                 break
-
-            dags = dag if dag else self.controller.sample(
-                self.args.shared_num_sample)
-            inputs, targets = self.get_batch(self.train_data,
-                                             train_idx,
-                                             self.max_length)
-
-            loss, hidden, extra_out = self.get_loss(inputs,
-                                                    targets,
-                                                    hidden,
-                                                    dags)
+            #Controller负责sample一个dag出来，是一个list，里面有一个defaultdict，存储了dag的连接信息
+            #这一步只是提取Controller的值，并没有训练，初始的时候也是随机得出来的一个dag
+            dags = dag if dag else self.controller.sample(batch_size=self.args.shared_num_sample)#shared_num_sample:default=1
+            #提取一个max_length长度的数据集（35,64），35个批次，每个批次64个词，组成一个训练批次
+            #input是训练数据，target是每个输入的词后面的词，用于训练RNN的
+            inputs, targets = self.get_batch(self.train_data, train_idx, self.max_length) #max_length=35
+            #get_loss完成了由dag生成的RNNcell的前向计算
+            loss, hidden, extra_out = self.get_loss(inputs, targets, hidden, dags)
+            #Detaches the Tensor from the graph that created it, making it a leaf. Views cannot be detached in-place.
             hidden.detach_()
             raw_total_loss += loss.data
-
+            #根据命令行参数加一下正则惩罚项
             loss += _apply_penalties(extra_out, self.args)
 
             # update
             self.shared_optim.zero_grad()
-            loss.backward()
+            loss.backward()#反向更新
 
             h1tohT = extra_out['hiddens']
-            new_abs_max_hidden_norm = utils.to_item(
-                h1tohT.norm(dim=-1).data.max())
+            #和日志有关，和计算无关
+            new_abs_max_hidden_norm = utils.to_item(h1tohT.norm(dim=-1).data.max())
             if new_abs_max_hidden_norm > abs_max_hidden_norm:
                 abs_max_hidden_norm = new_abs_max_hidden_norm
-                logger.info(f'max hidden {abs_max_hidden_norm}')
+                logger.info('max hidden {abs_max_hidden_norm}')
+            #函数的功能是获取Tensor图中的最大梯度，来检测是否出现梯度爆炸，但好像后面没有使用
             abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
-            torch.nn.utils.clip_grad_norm(model.parameters(),
-                                          self.args.shared_grad_clip)
-            self.shared_optim.step()
+            #Clips gradient norm of an iterable of parameters.
+            #The norm is computed over all gradients together, as if they were concatenated into a single vector.
+            #Gradients are modified in-place.
+            torch.nn.utils.clip_grad_norm(model.parameters(), self.args.shared_grad_clip)#shared_grad_clip=0.25
+            self.shared_optim.step()#Performs a single optimization step.
 
             total_loss += loss.data
-
+            #和log有关
             if ((step % self.args.log_step) == 0) and (step > 0):
                 self._summarize_shared_train(total_loss, raw_total_loss)
                 raw_total_loss = 0
@@ -332,7 +340,7 @@ class Trainer(object):
 
             step += 1
             self.shared_step += 1
-            train_idx += self.max_length
+            train_idx += self.max_length#max_length:35，下一个batch
 
     def get_reward(self, dag, entropies, hidden, valid_idx=0):
         """Computes the perplexity of a single sampled model on a minibatch of
@@ -495,9 +503,9 @@ class Trainer(object):
         val_loss = utils.to_item(total_loss) / len(data)
         ppl = math.exp(val_loss)
 
-        self.tb.scalar_summary(f'eval/{name}_loss', val_loss, self.epoch)
-        self.tb.scalar_summary(f'eval/{name}_ppl', ppl, self.epoch)
-        logger.info(f'eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
+        self.tb.scalar_summary('eval/{name}_loss', val_loss, self.epoch)
+        self.tb.scalar_summary('eval/{name}_ppl', ppl, self.epoch)
+        logger.info('eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
 
     def derive(self, sample_num=None, valid_idx=0):
         """TODO(brendan): We are always deriving based on the very first batch
@@ -519,9 +527,9 @@ class Trainer(object):
                 max_R = R.max()
                 best_dag = dag
 
-        logger.info(f'derive | max_R: {max_R:8.6f}')
-        fname = (f'{self.epoch:03d}-{self.controller_step:06d}-'
-                 f'{max_R:6.4f}-best.png')
+        logger.info('derive | max_R: {max_R:8.6f}')
+        fname = ('{self.epoch:03d}-{self.controller_step:06d}-'
+                 '{max_R:6.4f}-best.png')
         path = os.path.join(self.args.model_dir, 'networks', fname)
         utils.draw_network(best_dag, path)
         self.tb.image_summary('derive/best', [path], self.epoch)
@@ -538,13 +546,23 @@ class Trainer(object):
         return self.args.controller_lr
 
     def get_batch(self, source, idx, length=None, volatile=False):
+        """
+        这个函数的作用是从数据集中取得length长度的数据组成一个Variable（这个操作在pytorch中已经过时了，可以直接使用Tensor来生成计算，而不用
+        再使用Variable来封装Tensor来计算
+        这里的batch指的是取词窗口组成的batch，length是最多取多少个batch_size的词
+        :param source:数据集train_data
+        :param idx: 当前数据样本索引值
+        :param length:max_length=35？
+        :param volatile（易变的）:Volatile is recommended for purely inference mode, when you’re sure you won’t be even calling .backward()
+        设定volatie选项为true的话则只是取值模式，而不会进行反向计算
+        :return:
+        """
         # code from
         # https://github.com/pytorch/examples/blob/master/word_language_model/main.py
-        length = min(length if length else self.max_length,
-                     len(source) - 1 - idx)
-        data = Variable(source[idx:idx + length], volatile=volatile)
-        target = Variable(source[idx + 1:idx + 1 + length].view(-1),
-                          volatile=volatile)
+        length = min(length if length else self.max_length, len(source) - 1 - idx)
+        data = Variable(source[idx:idx + length], volatile=volatile)  #shape(35,64) 取35个批次，每个批次64个词
+        target = Variable(source[idx + 1:idx + 1 + length].view(-1), volatile=volatile) #view（35,64）->(2240)
+        #这里target=data+1的意思是从data中推断下一个词
         return data, target
 
     @property
@@ -586,7 +604,7 @@ class Trainer(object):
 
         for epoch in epochs[:-self.args.max_save_num]:
             paths = glob.glob(
-                os.path.join(self.args.model_dir, f'*_epoch{epoch}_*.pth'))
+                os.path.join(self.args.model_dir, '*_epoch{epoch}_*.pth'))
 
             for path in paths:
                 utils.remove_file(path)
@@ -595,7 +613,7 @@ class Trainer(object):
         epochs, shared_steps, controller_steps = self.get_saved_models_info()
 
         if len(epochs) == 0:
-            logger.info(f'[!] No checkpoint found in {self.args.model_dir}...')
+            logger.info('[!] No checkpoint found in {self.args.model_dir}...')
             return
 
         self.epoch = self.start_epoch = max(epochs)
@@ -609,11 +627,11 @@ class Trainer(object):
 
         self.shared.load_state_dict(
             torch.load(self.shared_path, map_location=map_location))
-        logger.info(f'[*] LOADED: {self.shared_path}')
+        logger.info('[*] LOADED: {self.shared_path}')
 
         self.controller.load_state_dict(
             torch.load(self.controller_path, map_location=map_location))
-        logger.info(f'[*] LOADED: {self.controller_path}')
+        logger.info('[*] LOADED: {self.controller_path}')
 
     def _summarize_controller_train(self,
                                     total_loss,
@@ -633,9 +651,9 @@ class Trainer(object):
             avg_reward_base = avg_reward
 
         logger.info(
-            f'| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
-            f'| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
-            f'| loss {cur_loss:.5f}')
+            '| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
+            '| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
+            '| loss {cur_loss:.5f}')
 
         # Tensorboard
         if self.tb is not None:
@@ -675,11 +693,11 @@ class Trainer(object):
         cur_raw_loss = utils.to_item(raw_total_loss) / self.args.log_step
         ppl = math.exp(cur_raw_loss)
 
-        logger.info(f'| epoch {self.epoch:3d} '
-                    f'| lr {self.shared_lr:4.2f} '
-                    f'| raw loss {cur_raw_loss:.2f} '
-                    f'| loss {cur_loss:.2f} '
-                    f'| ppl {ppl:8.2f}')
+        logger.info('| epoch {self.epoch:3d} '
+                    '| lr {self.shared_lr:4.2f} '
+                    '| raw loss {cur_raw_loss:.2f} '
+                    '| loss {cur_loss:.2f} '
+                    '| ppl {ppl:8.2f}')
 
         # Tensorboard
         if self.tb is not None:
