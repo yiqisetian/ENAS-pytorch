@@ -15,7 +15,6 @@ from torch.autograd import Variable
 import models
 import utils
 
-
 logger = utils.get_logger()
 
 
@@ -103,6 +102,7 @@ def _check_abs_max_grad(abs_max_grad, model):
 
 class Trainer(object):
     """A class to wrap training code."""
+
     def __init__(self, args, dataset):
         """Constructor for training algorithm.
 
@@ -149,13 +149,13 @@ class Trainer(object):
                                         args.test_batch_size,
                                         self.cuda)
 
-        self.max_length = self.args.shared_rnn_max_length   #default=35
+        self.max_length = self.args.shared_rnn_max_length  # default=35
 
         if args.use_tensorboard:
             self.tb = TensorBoard(args.model_dir)
         else:
             self.tb = None
-        self.build_model()  #创建一个模型存入self.shared中，这里可以是RNN或CNN，再创建一个Controler
+        self.build_model()  # 创建一个模型存入self.shared中，这里可以是RNN或CNN，再创建一个Controler
 
         if self.args.load_path:
             self.load_model()
@@ -182,7 +182,7 @@ class Trainer(object):
             self.shared = models.CNN(self.args, self.dataset)
         else:
             raise NotImplementedError('Network type `{self.args.network_type}` is not defined')
-        self.controller = models.Controller(self.args)  #构建了一个orward：Embedding（130,100）->lstm（100,100）->decoder的列表，对应25个decoder
+        self.controller = models.Controller(self.args)  # 构建了一个orward：Embedding（130,100）->lstm（100,100）->decoder的列表，对应25个decoder
 
         if self.args.num_gpu == 1:
             self.shared.cuda()
@@ -207,14 +207,15 @@ class Trainer(object):
             single (bool): If True it won't train the controller and use the
                            same dag instead of derive().
         """
-        dag = utils.load_dag(self.args) if single else None  #初始训练dag=None
-        
-        if self.args.shared_initial_step > 0:  #self.args.shared_initial_step default=0
+        dag = utils.load_dag(self.args) if single else None  # 初始训练dag=None
+
+        if self.args.shared_initial_step > 0:  # self.args.shared_initial_step default=0
             self.train_shared(self.args.shared_initial_step)
             self.train_controller()
 
-        for self.epoch in range(self.start_epoch, self.args.max_epoch):  #start_epoch=0,max_epoch=150
+        for self.epoch in range(self.start_epoch, self.args.max_epoch):  # start_epoch=0,max_epoch=150
             # 1. Training the shared parameters omega of the child models
+            # 训练RNN，先用Controller随机生成一个dag，然后用这个dag构建一个RNNcell，然后用这个RNNcell去做下一个词预测，得到loss
             self.train_shared(dag=dag)
 
             # 2. Training the controller parameters theta
@@ -227,7 +228,7 @@ class Trainer(object):
                     self.evaluate(self.eval_data,
                                   best_dag,
                                   'val_best',
-                                  max_num=self.args.batch_size*100)
+                                  max_num=self.args.batch_size * 100)
                 self.save_model()
 
             if self.epoch >= self.args.shared_decay_after:
@@ -251,10 +252,10 @@ class Trainer(object):
 
         loss = 0
         for dag in dags:
-            #decoded(35,64,10000),hidden(64,1000),extra_out{dropped_output(35,64,1000),h1tohT(35,64,1000),raw_output(35,64,1000)
-            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden) #RNN.forward
-            output_flat = output.view(-1, self.dataset.num_tokens) #(2240,10000)
-            #self.ce=nn.CrossEntropyLoss()  target(2240)  shared_num_sample=1
+            # decoded(35,64,10000),hidden(64,1000),extra_out{dropped_output(35,64,1000),h1tohT(35,64,1000),raw_output(35,64,1000)
+            output, hidden, extra_out = self.shared(inputs, dag, hidden=hidden)  # RNN.forward
+            output_flat = output.view(-1, self.dataset.num_tokens)  # (2240,10000)
+            # self.ce=nn.CrossEntropyLoss()  target(2240)  shared_num_sample=1
             sample_loss = (self.ce(output_flat, targets) / self.args.shared_num_sample)
             loss += sample_loss
 
@@ -275,64 +276,65 @@ class Trainer(object):
         from the fixed controller policy, and averaging their gradients
         computed on a batch of training data.
         """
-        model = self.shared   #model.RNN
-        model.train()   #set RNN.training属性为true 即当前训练的是Train而不训练Controller https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module.train
-        self.controller.eval() #Sets the module in evaluation mode. This is equivalent with self.train(False).
+        model = self.shared  # model.RNN
+        model.train()  # set RNN.training属性为true 即当前训练的是RNN而不训练Controller https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module.train
+        self.controller.eval()  # Sets the module in evaluation mode. This is equivalent with self.train(False).
         # 功能：初始化variable，即全零的Tensor
         hidden = self.shared.init_hidden(self.args.batch_size)
 
         if max_step is None:
-            max_step = self.args.shared_max_step  #shared_max_step=150
+            max_step = self.args.shared_max_step  # shared_max_step=150
         else:
             max_step = min(self.args.shared_max_step, max_step)
 
         abs_max_grad = 0
         abs_max_hidden_norm = 0
         step = 0
-        raw_total_loss = 0 #用于统计结果的，和计算过程无关
+        raw_total_loss = 0  # 用于统计结果的，和计算过程无关
         total_loss = 0
         train_idx = 0
         # TODO(brendan): Why - 1 - 1?为什么-1-1？
         # TODO(为什么-1-1)这里的train_idx是批次的编号，一共14524个batch（每个batch有64个词）为了训练输入数据不可能取最后一个batch
         # TODO(为什么-1-1)因为如果是最后一个batch就没有target了，因此最后一个batch是倒数第二个，而倒数第二个的下标是 size-2
-        #self.train_data.size(0)   14524
+        # self.train_data.size(0)   14524
         while train_idx < self.train_data.size(0) - 1 - 1:
             if step > max_step:
                 break
-            #Controller负责sample一个dag出来，是一个list，里面有一个defaultdict，存储了dag的连接信息
-            #这一步只是提取Controller的值，并没有训练，初始的时候也是随机得出来的一个dag
-            dags = dag if dag else self.controller.sample(batch_size=self.args.shared_num_sample)#shared_num_sample:default=1
-            #提取一个max_length长度的数据集（35,64），35个批次，每个批次64个词，组成一个训练批次
-            #input是训练数据，target是每个输入的词后面的词，用于训练RNN的
-            inputs, targets = self.get_batch(self.train_data, train_idx, self.max_length) #max_length=35
-            #get_loss完成了由dag生成的RNNcell的前向计算
+            # Controller负责sample一个dag出来，是一个list，里面有一个defaultdict，存储了dag的连接信息
+            # 这一步只是提取Controller的值，并没有训练，初始的时候也是随机得出来的一个dag
+            dags = dag if dag else self.controller.sample(
+                batch_size=self.args.shared_num_sample)  # shared_num_sample:default=1
+            # 提取一个max_length长度的数据集（35,64），35个批次，每个批次64个词，组成一个训练批次
+            # input是训练数据，target是每个输入的词后面的词，用于训练RNN的
+            inputs, targets = self.get_batch(self.train_data, train_idx, self.max_length)  # max_length=35
+            # get_loss完成了由dag生成的RNNcell的前向计算
             loss, hidden, extra_out = self.get_loss(inputs, targets, hidden, dags)
-            #Detaches the Tensor from the graph that created it, making it a leaf. Views cannot be detached in-place.
+            # Detaches the Tensor from the graph that created it, making it a leaf. Views cannot be detached in-place.
             hidden.detach_()
             raw_total_loss += loss.data
-            #根据命令行参数加一下正则惩罚项
+            # 根据命令行参数加一下正则惩罚项
             loss += _apply_penalties(extra_out, self.args)
 
             # update
             self.shared_optim.zero_grad()
-            loss.backward()#反向更新
+            loss.backward()  # 反向更新
 
             h1tohT = extra_out['hiddens']
-            #和日志有关，和计算无关
+            # 和日志有关，和计算无关
             new_abs_max_hidden_norm = utils.to_item(h1tohT.norm(dim=-1).data.max())
             if new_abs_max_hidden_norm > abs_max_hidden_norm:
                 abs_max_hidden_norm = new_abs_max_hidden_norm
                 logger.info('max hidden {abs_max_hidden_norm}')
-            #函数的功能是获取Tensor图中的最大梯度，来检测是否出现梯度爆炸，但好像后面没有使用
+            # 函数的功能是获取Tensor图中的最大梯度，来检测是否出现梯度爆炸，但好像后面没有使用
             abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
-            #Clips gradient norm of an iterable of parameters.
-            #The norm is computed over all gradients together, as if they were concatenated into a single vector.
-            #Gradients are modified in-place.
-            torch.nn.utils.clip_grad_norm(model.parameters(), self.args.shared_grad_clip)#shared_grad_clip=0.25
-            self.shared_optim.step()#Performs a single optimization step.
+            # Clips gradient norm of an iterable of parameters.
+            # The norm is computed over all gradients together, as if they were concatenated into a single vector.
+            # Gradients are modified in-place.
+            torch.nn.utils.clip_grad_norm(model.parameters(), self.args.shared_grad_clip)  # shared_grad_clip=0.25
+            self.shared_optim.step()  # Performs a single optimization step.
 
             total_loss += loss.data
-            #和log有关
+            # 和log有关
             if ((step % self.args.log_step) == 0) and (step > 0):
                 self._summarize_shared_train(total_loss, raw_total_loss)
                 raw_total_loss = 0
@@ -340,7 +342,7 @@ class Trainer(object):
 
             step += 1
             self.shared_step += 1
-            train_idx += self.max_length#max_length:35，下一个batch
+            train_idx += self.max_length  # max_length:35，下一个batch
 
     def get_reward(self, dag, entropies, hidden, valid_idx=0):
         """Computes the perplexity of a single sampled model on a minibatch of
@@ -387,13 +389,13 @@ class Trainer(object):
         first (Train Shared) phase -> second (Train Controller) phase).
         """
         model = self.controller
-        model.train()
-        # TODO(brendan): Why can't we call shared.eval() here? Leads to loss
-        # being uniformly zero for the controller.
-        # self.shared.eval()
+        model.train()  # 设置Controller的train属性为true，当前训练Controller
+        # 这里为什么不调用hared.eval()? 这是因为会导致Controller的loss一直为零。
+        # self.shared.eval()，上面的解释应该是Brendon这个人测试之后的结论
 
         avg_reward_base = None
         baseline = None
+        # 这几个是用于统计信息的
         adv_history = []
         entropy_history = []
         reward_history = []
@@ -401,10 +403,9 @@ class Trainer(object):
         hidden = self.shared.init_hidden(self.args.batch_size)
         total_loss = 0
         valid_idx = 0
-        for step in range(self.args.controller_max_step):
+        for step in range(self.args.controller_max_step):#controller_max_step
             # sample models
-            dags, log_probs, entropies = self.controller.sample(
-                with_details=True)
+            dags, log_probs, entropies = self.controller.sample(with_details=True)
 
             # calculate reward
             np_entropies = entropies.data.cpu().numpy()
@@ -434,9 +435,9 @@ class Trainer(object):
             adv_history.extend(adv)
 
             # policy loss
-            loss = -log_probs*utils.get_variable(adv,
-                                                 self.cuda,
-                                                 requires_grad=False)
+            loss = -log_probs * utils.get_variable(adv,
+                                                   self.cuda,
+                                                   requires_grad=False)
             if self.args.entropy_mode == 'regularizer':
                 loss -= self.args.entropy_coeff * entropies
 
@@ -483,7 +484,7 @@ class Trainer(object):
         self.shared.eval()
         self.controller.eval()
 
-        data = source[:max_num*self.max_length]
+        data = source[:max_num * self.max_length]
 
         total_loss = 0
         hidden = self.shared.init_hidden(batch_size)
@@ -560,9 +561,9 @@ class Trainer(object):
         # code from
         # https://github.com/pytorch/examples/blob/master/word_language_model/main.py
         length = min(length if length else self.max_length, len(source) - 1 - idx)
-        data = Variable(source[idx:idx + length], volatile=volatile)  #shape(35,64) 取35个批次，每个批次64个词
-        target = Variable(source[idx + 1:idx + 1 + length].view(-1), volatile=volatile) #view（35,64）->(2240)
-        #这里target=data+1的意思是从data中推断下一个词
+        data = Variable(source[idx:idx + length], volatile=volatile)  # shape(35,64) 取35个批次，每个批次64个词
+        target = Variable(source[idx + 1:idx + 1 + length].view(-1), volatile=volatile)  # view（35,64）->(2240)
+        # 这里target=data+1的意思是从data中推断下一个词
         return data, target
 
     @property
@@ -579,8 +580,8 @@ class Trainer(object):
 
         def get_numbers(items, delimiter, idx, replace_word, must_contain=''):
             return list(set([int(
-                    name.split(delimiter)[idx].replace(replace_word, ''))
-                    for name in basenames if must_contain in name]))
+                name.split(delimiter)[idx].replace(replace_word, ''))
+                for name in basenames if must_contain in name]))
 
         basenames = [os.path.basename(path.rsplit('.', 1)[0]) for path in paths]
         epochs = get_numbers(basenames, '_', 1, 'epoch')

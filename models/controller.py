@@ -219,7 +219,7 @@ class Controller(torch.nn.Module):
         if save_dir is not None:
             for idx, dag in enumerate(dags):
                 utils.draw_network(dag,os.path.join(save_dir, 'graph{idx}.png'))
-
+        #这个是用于训练Controller时除了要返回dag外还要返回一些其他的信息
         if with_details:
             return dags, torch.cat(log_probs), torch.cat(entropies)
 
