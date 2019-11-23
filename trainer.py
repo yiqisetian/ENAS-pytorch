@@ -22,7 +22,7 @@ def _apply_penalties(extra_out, args):
     """Based on `args`, optionally adds regularization penalty terms for
     activation regularization, temporal activation regularization and/or hidden
     state norm stabilization.
-
+    对RNN输出的正则惩罚项
     Args:
         extra_out[*]:
             dropped: Post-dropout activations.
@@ -59,6 +59,12 @@ def _apply_penalties(extra_out, args):
 
 
 def discount(x, amount):
+    """
+    对reward进行缩放的
+    :param x:reward
+    :param amount:
+    :return:
+    """
     return scipy.signal.lfilter([1], [1, -amount], x[::-1], axis=0)[::-1]
 
 
@@ -74,6 +80,7 @@ def _get_optimizer(name):
 def _get_no_grad_ctx_mgr():
     """Returns a the `torch.no_grad` context manager for PyTorch version >=
     0.4, or a no-op context manager otherwise.
+    用于训练Controller时取消RNN网络的梯度计算
     """
     if float(torch.__version__[0:3]) >= 0.4:
         return torch.no_grad()
@@ -230,7 +237,7 @@ class Trainer(object):
                                   'val_best',
                                   max_num=self.args.batch_size * 100)
                 self.save_model()
-
+            #应该是逐渐降低学习率
             if self.epoch >= self.args.shared_decay_after:
                 utils.update_lr(self.shared_optim, self.shared_lr)
 
@@ -240,7 +247,7 @@ class Trainer(object):
         :param targets: 目标数据（相当于标签）[35,64] 输入的词后移一个词
         :param hidden: 隐藏层参数
         :param dags: RNN 的cell结构
-        :return:
+        :return: decoded(35,64,10000),hidden(64,1000),extra_out{dropped_output(35,64,1000),h1tohT(35,64,1000),raw_output(35,64,1000)
         """
         """Computes the loss for the same batch for M models.
 
@@ -302,8 +309,7 @@ class Trainer(object):
                 break
             # Controller负责sample一个dag出来，是一个list，里面有一个defaultdict，存储了dag的连接信息
             # 这一步只是提取Controller的值，并没有训练，初始的时候也是随机得出来的一个dag
-            dags = dag if dag else self.controller.sample(
-                batch_size=self.args.shared_num_sample)  # shared_num_sample:default=1
+            dags = dag if dag else self.controller.sample(batch_size=self.args.shared_num_sample)  # shared_num_sample:default=1
             # 提取一个max_length长度的数据集（35,64），35个批次，每个批次64个词，组成一个训练批次
             # input是训练数据，target是每个输入的词后面的词，用于训练RNN的
             inputs, targets = self.get_batch(self.train_data, train_idx, self.max_length)  # max_length=35
@@ -347,6 +353,7 @@ class Trainer(object):
     def get_reward(self, dag, entropies, hidden, valid_idx=0):
         """Computes the perplexity of a single sampled model on a minibatch of
         validation data.
+        计算模型的PPL：每个词的条件预测概率（即已知前n个词预测第n+1个词的概率）的累积的倒数开N（全体词的数量）次方
         """
         if not isinstance(entropies, np.ndarray):
             entropies = entropies.data.cpu().numpy()
@@ -355,24 +362,24 @@ class Trainer(object):
                                          valid_idx,
                                          self.max_length,
                                          volatile=True)
-        valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)
+        valid_loss, hidden, _ = self.get_loss(inputs, targets, hidden, dag)#RNN.forward
         valid_loss = utils.to_item(valid_loss.data)
 
-        valid_ppl = math.exp(valid_loss)
+        valid_ppl = math.exp(valid_loss) #计算PPL
 
         # TODO: we don't know reward_c
-        if self.args.ppl_square:
+        if self.args.ppl_square:  #default:false
             # TODO: but we do know reward_c=80 in the previous paper
             R = self.args.reward_c / valid_ppl ** 2
         else:
-            R = self.args.reward_c / valid_ppl
+            R = self.args.reward_c / valid_ppl  #这个值的作用在NAS(Zoph and Le, 2017) page 8 states that c is a constant
 
-        if self.args.entropy_mode == 'reward':
-            rewards = R + self.args.entropy_coeff * entropies
+        if self.args.entropy_mode == 'reward':  #entroy_mode：default：reward
+            rewards = R + self.args.entropy_coeff * entropies  # entropy_coeff：default=1e-4
         elif self.args.entropy_mode == 'regularizer':
             rewards = R * np.ones_like(entropies)
         else:
-            raise NotImplementedError(f'Unkown entropy mode: {self.args.entropy_mode}')
+            raise NotImplementedError('Unkown entropy mode: '+self.args.entropy_mode)
 
         return rewards, hidden
 
@@ -405,20 +412,29 @@ class Trainer(object):
         valid_idx = 0
         for step in range(self.args.controller_max_step):#controller_max_step
             # sample models
+            #dags:list([1])(defaultdict([25])),log_probs:Tensor.size([23]),entropies:Tensor.size([23])交叉熵：-ylogy
             dags, log_probs, entropies = self.controller.sample(with_details=True)
 
             # calculate reward
             np_entropies = entropies.data.cpu().numpy()
             # NOTE(brendan): No gradients should be backpropagated to the
             # shared model during controller training, obviously.
+            """
+            with 语句实质是上下文管理。
+            1、上下文管理协议。包含方法__enter__() 和 __exit__()，支持该协议对象要实现这两个方法。
+            2、上下文管理器，定义执行with语句时要建立的运行时上下文，负责执行with语句块上下文中的进入与退出操作。
+            3、进入上下文的时候执行__enter__方法，如果设置as var语句，var变量接受__enter__()方法返回值。
+            4、如果运行时发生了异常，就退出上下文管理器。调用管理器__exit__方法。
+            """
+            # 创建了一个torch.no_grad()的上下文，执行get_reward的时候是不需要计算梯度的，执行完get_reward在恢复计算梯度模式
             with _get_no_grad_ctx_mgr():
                 rewards, hidden = self.get_reward(dags,
                                                   np_entropies,
                                                   hidden,
                                                   valid_idx)
 
-            # discount
-            if 1 > self.args.discount > 0:
+            # discount  默认未启用
+            if 1 > self.args.discount > 0: #discout:default=1
                 rewards = discount(rewards, self.args.discount)
 
             reward_history.extend(rewards)
@@ -428,7 +444,7 @@ class Trainer(object):
             if baseline is None:
                 baseline = rewards
             else:
-                decay = self.args.ema_baseline_decay
+                decay = self.args.ema_baseline_decay  #****ema_baseline_decay:default=0.95  very important
                 baseline = decay * baseline + (1 - decay) * rewards
 
             adv = rewards - baseline
@@ -438,7 +454,7 @@ class Trainer(object):
             loss = -log_probs * utils.get_variable(adv,
                                                    self.cuda,
                                                    requires_grad=False)
-            if self.args.entropy_mode == 'regularizer':
+            if self.args.entropy_mode == 'regularizer':  #entropy_mode:default='reward'
                 loss -= self.args.entropy_coeff * entropies
 
             loss = loss.sum()  # or loss.mean()
@@ -448,8 +464,7 @@ class Trainer(object):
             loss.backward()
 
             if self.args.controller_grad_clip > 0:
-                torch.nn.utils.clip_grad_norm(model.parameters(),
-                                              self.args.controller_grad_clip)
+                torch.nn.utils.clip_grad_norm(model.parameters(), self.args.controller_grad_clip)
             self.controller_optim.step()
 
             total_loss += utils.to_item(loss.data)
@@ -468,8 +483,7 @@ class Trainer(object):
             self.controller_step += 1
 
             prev_valid_idx = valid_idx
-            valid_idx = ((valid_idx + self.max_length) %
-                         (self.valid_data.size(0) - 1))
+            valid_idx = ((valid_idx + self.max_length) %  (self.valid_data.size(0) - 1))
             # NOTE(brendan): Whenever we wrap around to the beginning of the
             # validation data, we reset the hidden states.
             if prev_valid_idx > valid_idx:
@@ -542,7 +556,7 @@ class Trainer(object):
         degree = max(self.epoch - self.args.shared_decay_after + 1, 0)
         return self.args.shared_lr * (self.args.shared_decay ** degree)
 
-    @property
+    @property #将类方法转换为类属性，可以用 . 直接获取属性值或者对属性进行赋值
     def controller_lr(self):
         return self.args.controller_lr
 
@@ -568,11 +582,11 @@ class Trainer(object):
 
     @property
     def shared_path(self):
-        return f'{self.args.model_dir}/shared_epoch{self.epoch}_step{self.shared_step}.pth'
+        return self.args.model_dir+'/shared_epoch'+self.epoch+'_step'+self.shared_step+'.pth'
 
     @property
     def controller_path(self):
-        return f'{self.args.model_dir}/controller_epoch{self.epoch}_step{self.controller_step}.pth'
+        return self.args.model_dir+'/controller_epoch'+self.epoch+'_step'+self.controller_step+'.pth'
 
     def get_saved_models_info(self):
         paths = glob.glob(os.path.join(self.args.model_dir, '*.pth'))

@@ -219,11 +219,12 @@ class Controller(torch.nn.Module):
         if save_dir is not None:
             for idx, dag in enumerate(dags):
                 utils.draw_network(dag,os.path.join(save_dir, 'graph{idx}.png'))
-        #这个是用于训练Controller时除了要返回dag外还要返回一些其他的信息
-        if with_details:
-            return dags, torch.cat(log_probs), torch.cat(entropies)
 
-        return dags
+        #这个是用于训练Controller时除了要返回dag外还要返回一些其他的信息
+        if with_details:  #log_probs:list[23](tensor.size([1])) entropies:list[23](tensor.size([1]))
+            return dags, torch.cat(log_probs), torch.cat(entropies)  #torch.cat(log_probs):Tensor.size([23])
+
+        return dags  #list([1])(defaultdict([25]))
     #产生一个元祖（Variable（Tensor([batch,zize,100])),Variable（Tensor([batch,zize,100])))
     #和上面的_get_default_hidden功能类似，都是产生Variable，区别是init_hidden会产生两个
     def init_hidden(self, batch_size):
