@@ -8,7 +8,7 @@ import json
 import logging
 
 import numpy as np
-#import pygraphviz as pgv
+import pygraphviz as pgv
 
 import torch
 from torch.autograd import Variable
@@ -53,7 +53,7 @@ def add_node(graph, node_id, label, shape='box', style='filled'):
         color = 'white'
 
     if not any(label.startswith(word) for word in  ['x', 'avg', 'h']):
-        label = f"{label}\n({node_id})"
+        label = "{0} \n ({1})".format(label,node_id)
 
     graph.add_node(
             node_id, label=label, color='black', fillcolor=color,
@@ -62,7 +62,7 @@ def add_node(graph, node_id, label, shape='box', style='filled'):
 
 def draw_network(dag, path):
     makedirs(os.path.dirname(path))
-    """
+
     graph = pgv.AGraph(directed=True, strict=True,
                        fontname='Helvetica', arrowtype='open') # not work?
 
@@ -84,7 +84,7 @@ def draw_network(dag, path):
 
     graph.layout(prog='dot')
     graph.draw(path)
-    """
+
 def make_gif(paths, gif_path, max_frame=50, prefix=""):
     import imageio
 
@@ -113,8 +113,7 @@ def make_gif(paths, gif_path, max_frame=50, prefix=""):
 
         steps = [int(os.path.basename(path).rsplit('.', 1)[0].split('-')[1]) for path in paths]
         for step, draw in zip(steps, draws):
-            draw.text((max_h//20, max_h//20),
-                      f"{prefix}step: {format(step, ',d')}", (0, 0, 0), font=font)
+            draw.text((max_h//20, max_h//20),"{0}step: {1}".format(prefix,format(step, ',d')), (0, 0, 0), font=font)
     except IndexError:
         pass
 

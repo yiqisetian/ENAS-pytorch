@@ -146,5 +146,5 @@ def get_args():
     else:
         setattr(args, 'cuda', False)
     if len(unparsed) > 1:
-        logger.info(f"Unparsed args: {unparsed}")
+        logger.info("Unparsed args: {0}".format(unparsed))
     return args, unparsed

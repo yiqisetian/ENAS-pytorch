@@ -23,7 +23,7 @@ class TensorBoard(object):
 
             img.save(bio, format="png")
             image_summary = Summary.Image(encoded_image_string=bio.getvalue())
-            summary.value.add(tag=f"{tag}/{idx}", image=image_summary)
+            summary.value.add(tag="{0}/{1}".format(tag,idx), image=image_summary)
             self.summary_writer.add_summary(summary, global_step=step)
 
     def scalar_summary(self, tag, value, step):

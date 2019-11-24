@@ -22,7 +22,7 @@ class Image(object):
         elif args.dataset == 'MNIST':
             Dataset = datasets.MNIST
         else:
-            raise NotImplementedError(f'Unknown dataset: {args.dataset}')
+            raise NotImplementedError('Unknown dataset: {}'.format(args.dataset))
 
         self.train = t.utils.data.DataLoader(
             Dataset(root='./data', train=True, transform=transform, download=True),

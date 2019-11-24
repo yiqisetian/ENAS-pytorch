@@ -25,7 +25,7 @@ def main(args):  # pylint:disable=redefined-outer-name
     elif args.dataset == 'cifar':
         dataset = data.image.Image(args.data_path)
     else:
-        raise NotImplementedError("{args.dataset} is not supported")
+        raise NotImplementedError("{}is not supported".format(args.dataset))
 
     trnr = trainer.Trainer(args, dataset)
 
@@ -33,13 +33,11 @@ def main(args):  # pylint:disable=redefined-outer-name
         utils.save_args(args)
         trnr.train()
     elif args.mode == 'derive':
-        assert args.load_path != "", ("`--load_path` should be given in "
-                                      "`derive` mode")
+        assert args.load_path != "", ("`--load_path` should be given in `derive` mode")
         trnr.derive()
     elif args.mode == 'test':
         if not args.load_path:
-            raise Exception("[!] You should specify `load_path` to load a "
-                            "pretrained model")
+            raise Exception("[!] You should specify `load_path` to load a pretrained model")
         trnr.test()
     elif args.mode == 'single':
         if not args.dag_path:
@@ -47,7 +45,7 @@ def main(args):  # pylint:disable=redefined-outer-name
         utils.save_args(args)
         trnr.train(single=True)
     else:
-        raise Exception(f"[!] Mode not found: {args.mode}")
+        raise Exception("[!] Mode not found: {}".format(args.mode))
 
 if __name__ == "__main__":
     args, unparsed = config.get_args()

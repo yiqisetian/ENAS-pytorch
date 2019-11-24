@@ -101,7 +101,7 @@ def _check_abs_max_grad(abs_max_grad, model):
 
     new_abs_max_grad = max(new_max_grad, abs(new_min_grad))
     if new_abs_max_grad > abs_max_grad:
-        logger.info(f'abs max grad {abs_max_grad}')
+        logger.info('abs max grad {0}'.format(abs_max_grad))
         return new_abs_max_grad
 
     return abs_max_grad
@@ -139,7 +139,7 @@ class Trainer(object):
                             ('norm stabilizer regularization',
                              self.args.norm_stabilizer_regularization)]:
             if regularizer[1]:
-                logger.info(f'{regularizer[0]}')
+                logger.info('{0}'.format(regularizer[0]))
 
         self.train_data = utils.batchify(dataset.train, args.batch_size, self.cuda)
         # NOTE(brendan): The validation set data is batchified twice
@@ -188,7 +188,7 @@ class Trainer(object):
         elif self.args.network_type == 'cnn':
             self.shared = models.CNN(self.args, self.dataset)
         else:
-            raise NotImplementedError('Network type `{self.args.network_type}` is not defined')
+            raise NotImplementedError('Network type `{0}` is not defined'.format(self.args.network_type))
         self.controller = models.Controller(self.args)  # 构建了一个orward：Embedding（130,100）->lstm（100,100）->decoder的列表，对应25个decoder
 
         if self.args.num_gpu == 1:
@@ -330,7 +330,7 @@ class Trainer(object):
             new_abs_max_hidden_norm = utils.to_item(h1tohT.norm(dim=-1).data.max())
             if new_abs_max_hidden_norm > abs_max_hidden_norm:
                 abs_max_hidden_norm = new_abs_max_hidden_norm
-                logger.info('max hidden {abs_max_hidden_norm}')
+                logger.info('max hidden {0}'.format(abs_max_hidden_norm))
             # 函数的功能是获取Tensor图中的最大梯度，来检测是否出现梯度爆炸，但好像后面没有使用
             abs_max_grad = _check_abs_max_grad(abs_max_grad, model)
             # Clips gradient norm of an iterable of parameters.
@@ -379,7 +379,7 @@ class Trainer(object):
         elif self.args.entropy_mode == 'regularizer':
             rewards = R * np.ones_like(entropies)
         else:
-            raise NotImplementedError('Unkown entropy mode: '+self.args.entropy_mode)
+            raise NotImplementedError('Unkown entropy mode: {0}'.format(self.args.entropy_mode))
 
         return rewards, hidden
 
@@ -518,9 +518,9 @@ class Trainer(object):
         val_loss = utils.to_item(total_loss) / len(data)
         ppl = math.exp(val_loss)
 
-        self.tb.scalar_summary('eval/{name}_loss', val_loss, self.epoch)
-        self.tb.scalar_summary('eval/{name}_ppl', ppl, self.epoch)
-        logger.info('eval | loss: {val_loss:8.2f} | ppl: {ppl:8.2f}')
+        self.tb.scalar_summary('eval/{0}_loss'.format(name), val_loss, self.epoch)
+        self.tb.scalar_summary('eval/{0}_ppl'.name, ppl, self.epoch)
+        logger.info('eval | loss: {0:8.2f} | ppl: {1:8.2f}'.format(val_loss,ppl))
 
     def derive(self, sample_num=None, valid_idx=0):
         """TODO(brendan): We are always deriving based on the very first batch
@@ -542,9 +542,8 @@ class Trainer(object):
                 max_R = R.max()
                 best_dag = dag
 
-        logger.info('derive | max_R: {max_R:8.6f}')
-        fname = ('{self.epoch:03d}-{self.controller_step:06d}-'
-                 '{max_R:6.4f}-best.png')
+        logger.info('derive | max_R: {0:8.6f}'.format(max_R))
+        fname = ('{0:03d}-{1:06d}-{2:6.4f}-best.png'.format(self.epoch,self.controller_step,max_R))
         path = os.path.join(self.args.model_dir, 'networks', fname)
         utils.draw_network(best_dag, path)
         self.tb.image_summary('derive/best', [path], self.epoch)
@@ -610,16 +609,16 @@ class Trainer(object):
 
     def save_model(self):
         torch.save(self.shared.state_dict(), self.shared_path)
-        logger.info(f'[*] SAVED: {self.shared_path}')
+        logger.info('[*] SAVED: {0}'.format(self.shared_path))
 
         torch.save(self.controller.state_dict(), self.controller_path)
-        logger.info(f'[*] SAVED: {self.controller_path}')
+        logger.info('[*] SAVED: {0}'.format(self.controller_path))
 
         epochs, shared_steps, controller_steps = self.get_saved_models_info()
 
         for epoch in epochs[:-self.args.max_save_num]:
             paths = glob.glob(
-                os.path.join(self.args.model_dir, '*_epoch{epoch}_*.pth'))
+                os.path.join(self.args.model_dir, '*_epoch{0}_*.pth'.format(epoch)))
 
             for path in paths:
                 utils.remove_file(path)
@@ -628,7 +627,7 @@ class Trainer(object):
         epochs, shared_steps, controller_steps = self.get_saved_models_info()
 
         if len(epochs) == 0:
-            logger.info('[!] No checkpoint found in {self.args.model_dir}...')
+            logger.info('[!] No checkpoint found in {0}...'.format(self.args.model_dir))
             return
 
         self.epoch = self.start_epoch = max(epochs)
@@ -642,11 +641,11 @@ class Trainer(object):
 
         self.shared.load_state_dict(
             torch.load(self.shared_path, map_location=map_location))
-        logger.info('[*] LOADED: {self.shared_path}')
+        logger.info('[*] LOADED: {0}'.format(self.shared_path))
 
         self.controller.load_state_dict(
             torch.load(self.controller_path, map_location=map_location))
-        logger.info('[*] LOADED: {self.controller_path}')
+        logger.info('[*] LOADED: {0}'.format(self.controller_path))
 
     def _summarize_controller_train(self,
                                     total_loss,
@@ -665,10 +664,7 @@ class Trainer(object):
         if avg_reward_base is None:
             avg_reward_base = avg_reward
 
-        logger.info(
-            '| epoch {self.epoch:3d} | lr {self.controller_lr:.5f} '
-            '| R {avg_reward:.5f} | entropy {avg_entropy:.4f} '
-            '| loss {cur_loss:.5f}')
+        logger.info('| epoch {0:3d} | lr {1:.5f} | R {2:.5f} | entropy {3:.4f} | loss {:.5f}'.format(self.epoch,self.controller_lr,avg_reward,avg_entropy,cur_loss))
 
         # Tensorboard
         if self.tb is not None:
@@ -690,8 +686,7 @@ class Trainer(object):
 
             paths = []
             for dag in dags:
-                fname = (f'{self.epoch:03d}-{self.controller_step:06d}-'
-                         f'{avg_reward:6.4f}.png')
+                fname = ('{0:03d}-{1:06d}-{2:6.4f}.png'.format(self.epoch,self.controller_step,avg_reward))
                 path = os.path.join(self.args.model_dir, 'networks', fname)
                 utils.draw_network(dag, path)
                 paths.append(path)
@@ -708,11 +703,7 @@ class Trainer(object):
         cur_raw_loss = utils.to_item(raw_total_loss) / self.args.log_step
         ppl = math.exp(cur_raw_loss)
 
-        logger.info('| epoch {self.epoch:3d} '
-                    '| lr {self.shared_lr:4.2f} '
-                    '| raw loss {cur_raw_loss:.2f} '
-                    '| loss {cur_loss:.2f} '
-                    '| ppl {ppl:8.2f}')
+        logger.info('| epoch {0:3d} | lr {1:4.2f} | raw loss {2:.2f} | loss {3:.2f} | ppl {4:8.2f}'.format(self.epoch,self.shared_lr,cur_raw_loss,cur_loss,ppl))
 
         # Tensorboard
         if self.tb is not None:

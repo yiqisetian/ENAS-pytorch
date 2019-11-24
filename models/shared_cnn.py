@@ -26,7 +26,7 @@ def conv(kernel, planes):
     elif kernel == 5:
         _conv = conv5x5
     else:
-        raise NotImplemented(f"Unkown kernel size: {kernel}")
+        raise NotImplemented("Unkown kernel size: {0}".format(kernel))
 
     return nn.Sequential(
             nn.ReLU(inplace=True),
