@@ -258,7 +258,7 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
         #这个value就是一个全零的Variable
         self.static_init_hidden = utils.keydefaultdict(self.init_hidden)#init_hidden是一个方法，返回一个全零的Variable
 
-        logger.info('# of parameters: {format(self.num_parameters, ",d")}')
+        logger.info('# of parameters: {0}'.format(format(self.num_parameters, ",d")))
 
     def forward(self,  # pylint:disable=arguments-differ
                 inputs,  #[35,64]

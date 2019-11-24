@@ -8,7 +8,7 @@ import json
 import logging
 
 import numpy as np
-import pygraphviz as pgv
+#import pygraphviz as pgv
 
 import torch
 from torch.autograd import Variable
@@ -62,7 +62,7 @@ def add_node(graph, node_id, label, shape='box', style='filled'):
 
 def draw_network(dag, path):
     makedirs(os.path.dirname(path))
-
+    """
     graph = pgv.AGraph(directed=True, strict=True,
                        fontname='Helvetica', arrowtype='open') # not work?
 
@@ -84,7 +84,7 @@ def draw_network(dag, path):
 
     graph.layout(prog='dot')
     graph.draw(path)
-
+    """
 def make_gif(paths, gif_path, max_frame=50, prefix=""):
     import imageio
 

@@ -545,8 +545,8 @@ class Trainer(object):
         logger.info('derive | max_R: {0:8.6f}'.format(max_R))
         fname = ('{0:03d}-{1:06d}-{2:6.4f}-best.png'.format(self.epoch,self.controller_step,max_R))
         path = os.path.join(self.args.model_dir, 'networks', fname)
-        utils.draw_network(best_dag, path)
-        self.tb.image_summary('derive/best', [path], self.epoch)
+        #utils.draw_network(best_dag, path)
+        #self.tb.image_summary('derive/best', [path], self.epoch)
 
         return best_dag
 
