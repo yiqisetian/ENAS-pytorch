@@ -37,8 +37,7 @@ class Corpus(object):
 
     def tokenize(self, path):
         """Tokenizes a text file.
-        将词加入Corpus中自定义的字典属性
-        然后将每个词所对应的字典key保存到一个ids中
+        将词加入Corpus中自定义的字典属性,然后将每个词所对应的字典key保存到一个ids中
         params：path：文本文件所在目录
         return：词对应的序号LongTensor
         """

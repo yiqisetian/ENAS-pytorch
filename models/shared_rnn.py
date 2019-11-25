@@ -316,7 +316,7 @@ class RNN(models.shared_base.SharedModel):#继承关系RNN->models.shared_base.S
             h1tohT.append(hidden)
 
         if clipped_num > 0:
-            logger.info('clipped {clipped_num} hidden states in one forward pass.max clipped hidden state norm: {max_clipped_norm}')
+            logger.info('clipped {} hidden states in one forward pass.max clipped hidden state norm: {}'.format(clipped_num,max_clipped_norm))
         #torch.stack:Concatenates sequence of tensors along a new dimension.
         h1tohT = torch.stack(h1tohT)  #h1tohT(list,[35,[64,1000]]->Tensor(35,64,1000)
         output = torch.stack(logits)  #output(Tensor(35,64,1000))

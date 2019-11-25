@@ -18,6 +18,7 @@ def main(args):  # pylint:disable=redefined-outer-name
     torch.manual_seed(args.random_seed)
 
     if args.num_gpu > 0:
+        #Sets the seed for generating random numbers for the current GPU. It’s safe to call this function if CUDA is not available; in that case, it is silently ignored.
         torch.cuda.manual_seed(args.random_seed)
 
     if args.network_type == 'rnn':

@@ -168,8 +168,12 @@ def batchify(data, bsz, use_cuda):
 # ETC
 ##########################
 
-Node = collections.namedtuple('Node', ['id', 'name'])
 
+def get_pytorch_version():
+    """Return the PyTorch version as float."""
+    return float(torch.__version__[0:3])
+
+Node = collections.namedtuple('Node', ['id', 'name'])
 
 class keydefaultdict(defaultdict):
     #https://www.jb51.net/article/134356.htm

@@ -519,7 +519,7 @@ class Trainer(object):
         ppl = math.exp(val_loss)
 
         self.tb.scalar_summary('eval/{0}_loss'.format(name), val_loss, self.epoch)
-        self.tb.scalar_summary('eval/{0}_ppl'.name, ppl, self.epoch)
+        self.tb.scalar_summary('eval/{0}_ppl'.format(name), ppl, self.epoch)
         logger.info('eval | loss: {0:8.2f} | ppl: {1:8.2f}'.format(val_loss,ppl))
 
     def derive(self, sample_num=None, valid_idx=0):
@@ -574,6 +574,7 @@ class Trainer(object):
         # code from
         # https://github.com/pytorch/examples/blob/master/word_language_model/main.py
         length = min(length if length else self.max_length, len(source) - 1 - idx)
+        #UserWarning: volatile was removed and now has no effect. Use `with torch.no_grad():` instead.
         data = Variable(source[idx:idx + length], volatile=volatile)  # shape(35,64) 取35个批次，每个批次64个词
         target = Variable(source[idx + 1:idx + 1 + length].view(-1), volatile=volatile)  # view（35,64）->(2240)
         # 这里target=data+1的意思是从data中推断下一个词
@@ -581,11 +582,11 @@ class Trainer(object):
 
     @property
     def shared_path(self):
-        return self.args.model_dir+'/shared_epoch'+self.epoch+'_step'+self.shared_step+'.pth'
+        return  '{0}/shared_epoch{1:d}_step{2:d}.pth'.format(self.args.model_dir,self.epoch,self.shared_step)
 
     @property
     def controller_path(self):
-        return self.args.model_dir+'/controller_epoch'+self.epoch+'_step'+self.controller_step+'.pth'
+        return '{}/controller_epoch{}_step{}.pth'.format(self.args.model_dir,self.epoch,self.controller_step)
 
     def get_saved_models_info(self):
         paths = glob.glob(os.path.join(self.args.model_dir, '*.pth'))
